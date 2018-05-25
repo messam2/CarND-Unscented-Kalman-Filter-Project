@@ -28,7 +28,7 @@ UKF::UKF() {
   std_a_ = 2;
 
   // Process noise standard deviation yaw acceleration in rad/s^2
-  std_yawdd_ = 0.3;
+  std_yawdd_ = 0.4;
   
   //DO NOT MODIFY measurement noise values below these are provided by the sensor manufacturer.
   // Laser measurement noise standard deviation position1 in m
@@ -72,6 +72,14 @@ UKF::UKF() {
   NIS_radar_ = 0.0;
 
   NIS_laser_ = 0.0;
+
+
+  double weight_0 = lambda_/(lambda_+n_aug_);    
+  weights_(0) = weight_0;
+  for (int i=1; i<2*n_aug_+1; i++) {  //2n+1 weights_
+    double weight = 0.5/(n_aug_+lambda_);
+    weights_(i) = weight;
+  }
 }
 
 UKF::~UKF() {}
@@ -87,41 +95,53 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
   Complete this function! Make sure you switch between lidar and radar
   measurements.
   */
-  if (is_initialized_)
+  if ((meas_package.sensor_type_ == MeasurementPackage::RADAR && use_radar_) ||
+      (meas_package.sensor_type_ == MeasurementPackage::LASER && use_laser_))
   {
-    double delta_t = (meas_package.timestamp_ - time_us_) / 1000000.0;
-    time_us_ = meas_package.timestamp_; 
-    Prediction(delta_t);  
+    if (!is_initialized_)
+    {
+      if (meas_package.sensor_type_ == MeasurementPackage::LASER && use_laser_)
+      {
+        //Initialize state.
+        x_(0) = meas_package.raw_measurements_(0);
+        x_(1) = meas_package.raw_measurements_(1);
 
-    if(meas_package.sensor_type_ == MeasurementPackage::LASER && use_laser_)
+      }
+      else if (meas_package.sensor_type_ == MeasurementPackage::RADAR && use_radar_)
+      {
+        // Convert polar to cartesian coordinates
+        float rho = meas_package.raw_measurements_(0);
+        float theta = meas_package.raw_measurements_(1);
+
+        // initialize state
+        x_(0) = rho * cos(theta);
+        x_(1) = rho * sin(theta);
+      }
+
+      time_us_ = meas_package.timestamp_;
+
+      is_initialized_ = true;
+
+      return;
+    }
+
+    //Prediction//
+
+    //compute the time elapsed between the current and previous measurements
+    float dt = (meas_package.timestamp_ - time_us_) / 1000000.0; //dt - expressed in seconds
+    time_us_ = meas_package.timestamp_;
+    Prediction(dt);
+
+    //Update//
+
+    if (meas_package.sensor_type_ == MeasurementPackage::LASER)
     {
       UpdateLidar(meas_package);
     }
-    else if (meas_package.sensor_type_ == MeasurementPackage::RADAR && use_radar_)
+    else if (meas_package.sensor_type_ == MeasurementPackage::RADAR)
     {
       UpdateRadar(meas_package);
     }
-  }
-  else
-  {
-    x_ <<  1, 1, 1, 1, 0.1;
-    P_ = MatrixXd::Identity(5,5);
-
-    if(meas_package.sensor_type_ == MeasurementPackage::LASER && use_laser_)
-    {
-      x_(0) = meas_package.raw_measurements_(0);
-      x_(1) = meas_package.raw_measurements_(1);
-    }
-    else if (meas_package.sensor_type_ == MeasurementPackage::RADAR && use_radar_)
-    {
-      float rho     = meas_package.raw_measurements_(0);
-      float phi     = meas_package.raw_measurements_(1);
-      x_(0) = rho * cos(phi);
-      x_(1) = rho * sin(phi);
-    }
-
-    is_initialized_ = true;
-    time_us_ = meas_package.timestamp_;
   }
 }
 
@@ -195,13 +215,13 @@ void UKF::Prediction(double delta_t) {
   for (int i = 0; i< 2*n_aug_+1; i++)
   {
     //extract values for better readability
-    double p_x = Xsig_aug(0,i);
-    double p_y = Xsig_aug(1,i);
-    double v = Xsig_aug(2,i);
-    double yaw = Xsig_aug(3,i);
-    double yawd = Xsig_aug(4,i);
-    double nu_a = Xsig_aug(5,i);
-    double nu_yawdd = Xsig_aug(6,i);
+    const double p_x = Xsig_aug(0,i);
+    const double p_y = Xsig_aug(1,i);
+    const double v = Xsig_aug(2,i);
+    const double yaw = Xsig_aug(3,i);
+    const double yawd = Xsig_aug(4,i);
+    const double nu_a = Xsig_aug(5,i);
+    const double nu_yawdd = Xsig_aug(6,i);
 
     //predicted state values
     double px_p, py_p;
@@ -237,13 +257,6 @@ void UKF::Prediction(double delta_t) {
   }
 
   /* calculate mean and covariance */
-  
-  double weight_0 = lambda_/(lambda_+n_aug_);    
-  weights_(0) = weight_0;
-  for (int i=1; i<2*n_aug_+1; i++) {  //2n+1 weights_
-    double weight = 0.5/(n_aug_+lambda_);
-    weights_(i) = weight;
-  }
 
   //predicted state mean
   x_.fill(0.0);
